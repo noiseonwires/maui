@@ -57,5 +57,73 @@ namespace Microsoft.Maui.Essentials.DeviceTests
 			File.Delete(filePath);
 		}
 #endif
+		[Fact]
+		public async Task CheckFileResultWithFilePath()
+		{
+			string filePath = Path.Combine(FileSystem.CacheDirectory, "sample.txt");
+			await File.WriteAllTextAsync(filePath, "Sample content for testing");
+
+			var fileResult = new FileResult(filePath);
+
+			using var stream = await fileResult.OpenReadAsync();
+
+			Assert.NotNull(stream);
+
+			File.Delete(filePath);
+		}
+
+		[Fact]
+		public async Task CheckFileResultOpenReadAsyncMultipleTimes()
+		{
+			string filePath = Path.Combine(FileSystem.CacheDirectory, "sample_multiple.txt");
+			string expectedContent = "Sample content for multiple stream testing";
+			await File.WriteAllTextAsync(filePath, expectedContent);
+
+			var fileResult = new FileResult(filePath);
+
+			// First call to OpenReadAsync
+			using (var firstStream = await fileResult.OpenReadAsync())
+			{
+				Assert.NotNull(firstStream);
+				using var firstReader = new StreamReader(firstStream);
+				var firstContent = await firstReader.ReadToEndAsync();
+				Assert.Equal(expectedContent, firstContent);
+			}
+
+			// Second call to OpenReadAsync - should still work
+			using (var secondStream = await fileResult.OpenReadAsync())
+			{
+				Assert.NotNull(secondStream);
+				using var secondReader = new StreamReader(secondStream);
+				var secondContent = await secondReader.ReadToEndAsync();
+				Assert.Equal(expectedContent, secondContent);
+			}
+
+			File.Delete(filePath);
+		}
+
+#if WINDOWS
+		[Theory]
+		[InlineData(".webp", "image/webp")]
+		[InlineData(".jpg", "image/jpeg")]
+		[InlineData(".JPG", "image/jpeg")]
+		[InlineData(".Jpg", "image/jpeg")]
+		[InlineData(".jPg", "image/jpeg")]
+		[InlineData(".jpg ", "image/jpeg")]  // Trailing space
+		[InlineData(" .jpg", "image/jpeg")]  // Leading space
+		[InlineData(" .jpg ", "image/jpeg")] // Leading and trailing spaces
+		[InlineData(".png", "image/png")]
+		[InlineData(".PNG", "image/png")]
+		[InlineData(".tar.gz", "application/gzip")]
+		[InlineData(".TAR.GZ", "application/gzip")]
+		public async Task EnsureFileResultContentType(string extension, string expectedMimeType)
+		{
+			string filePath = Path.Combine(FileSystem.CacheDirectory, $"test{extension}");
+			await File.WriteAllTextAsync(filePath, $"File Content type is {expectedMimeType}");
+			FileResult fileResult = new FileResult(filePath);
+			Assert.Equal(expectedMimeType, fileResult.ContentType);
+			File.Delete(filePath);
+		}
+#endif
 	}
 }

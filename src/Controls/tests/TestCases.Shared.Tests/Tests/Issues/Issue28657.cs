@@ -13,16 +13,15 @@ public class Issue28657 : _IssuesUITest
     }
 
     [Test]
-    [Category(UITestCategories.CollectionView)]
+    [ShardedTestCategory(UITestCategories.CollectionView, shard: 2)]
     public void CellLayoutUpdatesCorrectlyAfterDeviceOrientationChanges()
     {
         App.WaitForElement("StubLabel");
         App.SetOrientationLandscape();
-        Thread.Sleep(400);
-        VerifyScreenshot("Issue28657_Landscape");
+        // Use retryTimeout to wait for orientation change to complete
+        VerifyScreenshot("Issue28657_Landscape", retryTimeout: TimeSpan.FromSeconds(2));
         App.SetOrientationPortrait();
-        Thread.Sleep(400);
-        VerifyScreenshot("Issue28657_Portrait");
+        VerifyScreenshot("Issue28657_Portrait", retryTimeout: TimeSpan.FromSeconds(2));
     }
 }
 #endif

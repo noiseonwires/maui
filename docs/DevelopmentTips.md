@@ -21,6 +21,8 @@ for IntelliSense and other tasks to initialize. If the project hasn't 'settled' 
 
 The below parameters can be used with the `dotnet cake` command in the root of your locally cloned .NET MAUI repository folder.
 
+> **Note:** For provisioning .NET SDK and workloads, prefer using `./build.sh -restore` (or `./build.cmd -restore` on Windows) instead of Cake. The Cake targets below are utility commands.
+
 #### PublicAPI Management
 `--target=publicapi`
 - Clears and regenerates PublicAPI.Unshipped.txt files across all MAUI projects (Core, Controls, Essentials, Graphics)
@@ -55,15 +57,38 @@ To build and run Blazor Desktop samples, check out the [Blazor Desktop](https://
 
 ### Compile using a local `.dotnet\dotnet` via `build.*` scripts on the root folder 
 
-This method uses the Arcade build infrastructure. For more information, you can look [here](https://github.com/dotnet/arcade/blob/main/Documentation/ArcadeSdk.md#build-scripts-and-extensibility-points)
+This is the **recommended** method for provisioning the .NET SDK and workloads. It uses the Arcade build infrastructure. For more information, you can look [here](https://github.com/dotnet/arcade/blob/main/Documentation/ArcadeSdk.md#build-scripts-and-extensibility-points)
 
+```bash
+# Restore .NET SDK and workloads to .dotnet folder
+./build.sh -restore
+``` 
+or on Windows:
+
+```cmd
+.\build.cmd -restore
 ```
+
+To also build the solution:
+
+```bash
+./build.sh -restore -build
+``` 
+or 
+
+```cmd
+.\build.cmd -restore -build
+```
+
+To pack:
+
+```bash
 ./build.sh -restore -pack
 ``` 
 or 
 
-```
-./build.cmd -restore -pack
+```cmd
+.\build.cmd -restore -pack
 ```
 
 
@@ -187,6 +212,16 @@ These tests can be run using the Test Explorer in VS, or from the command line w
 
 ```bash
 dotnet test src/TestUtils/src/Microsoft.Maui.IntegrationTests --logger "console;verbosity=diagnostic" --filter "Name=Build\(%22maui%22,%22net7.0%22,%22Debug%22,False\)"
+```
+
+Integration test commands terminate their process tree on timeout and report the command's PID and timeout duration, using the console when no test output helper is supplied. Emulator startup explicitly leaves the emulator running for the collection fixture to manage. Output draining waits at most 10 seconds after the parent exits, then reports if a descendant still holds the redirected pipes open.
+
+A truncated binlog is reported as incomplete without replacing the original build failure; warning validation rejects incomplete logs. This includes truncation after `BuildFinished`, while the logger is still writing embedded imports or its end-of-file marker.
+
+The harness regression tests do not require MAUI workloads or an emulator:
+
+```bash
+dotnet test src/TestUtils/src/Microsoft.Maui.IntegrationTests --filter "FullyQualifiedName~ToolRunnerTests|FullyQualifiedName~BuildWarningsUtilitiesTests"
 ```
 
 ## Running Device Tests on Helix

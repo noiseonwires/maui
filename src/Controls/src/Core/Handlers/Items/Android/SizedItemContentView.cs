@@ -25,8 +25,8 @@ namespace Microsoft.Maui.Controls.Handlers.Items
 				return;
 			}
 
-			double targetWidth = _width();
-			double targetHeight = _height();
+			double targetWidth = NormalizeDimension(_width());
+			double targetHeight = NormalizeDimension(_height());
 
 			if (!double.IsInfinity(targetWidth))
 				targetWidth = Context.FromPixels(targetWidth);
@@ -47,6 +47,16 @@ namespace Microsoft.Maui.Controls.Handlers.Items
 
 				SetMeasuredDimension((int)size.Width, (int)size.Height);
 			}
+		}
+
+		static double NormalizeDimension(double value) => value == int.MaxValue ? double.PositiveInfinity : value;
+	}
+
+	internal class EmptyViewContentView : SizedItemContentView, IMauiRecyclerViewEmptyView
+	{
+		public EmptyViewContentView(Context context, Func<double> width, Func<double> height)
+			: base(context, width, height)
+		{
 		}
 	}
 }

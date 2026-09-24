@@ -71,6 +71,26 @@ dotnet tool restore
 ./build.sh -restore -build -configuration Release /p:BuildDeviceTests=true /bl:BuildDeviceTests.binlog -warnAsError false
 ```
 
+### Using the run-device-tests Skill (Recommended)
+
+The easiest way to run device tests locally is using the `run-device-tests` skill:
+
+```bash
+# Run Controls tests on iOS simulator
+pwsh .github/skills/run-device-tests/scripts/Run-DeviceTests.ps1 -Project Controls -Platform ios
+
+# Run only Button category tests
+pwsh .github/skills/run-device-tests/scripts/Run-DeviceTests.ps1 -Project Controls -Platform ios -TestFilter "Category=Button"
+
+# Run on Android emulator
+pwsh .github/skills/run-device-tests/scripts/Run-DeviceTests.ps1 -Project Controls -Platform android -TestFilter "Category=Button"
+
+# Run on MacCatalyst
+pwsh .github/skills/run-device-tests/scripts/Run-DeviceTests.ps1 -Project Core -Platform maccatalyst
+```
+
+See `.github/skills/run-device-tests/SKILL.md` for full documentation.
+
 ### Submit to Helix
 
 Set required environment variables:
@@ -118,7 +138,57 @@ To validate the helix proj without submitting (requires built artifacts):
 dotnet msbuild eng/helix_xharness.proj /t:DiscoverTestBundles /p:TargetOS=ios /p:_MauiDotNetTfm=net10.0 /p:RepoRoot=$(pwd)/ -v:n
 ```
 
+## Test Filtering Implementation
+
+Test category filtering is implemented in `src/Core/tests/DeviceTests.Shared/DeviceTestSharedHelpers.cs`. The `GetExcludedTestCategories()` method reads the `TestFilter` value and converts it to a list of categories to skip.
+
+### Filter Syntax
+
+| Format | Description | Example |
+|--------|-------------|---------|
+| `Category=X` | Run only category X (skip all others) | `Category=Button` |
+| `SkipCategories=X,Y,Z` | Skip specific categories | `SkipCategories=Shell,CollectionView` |
+
+### Platform-Specific Filter Passing
+
+| Platform | XHarness Argument | How App Reads It |
+|----------|-------------------|------------------|
+| **iOS/MacCatalyst** | `--set-env=TestFilter=...` | `NSProcessInfo.ProcessInfo.Environment["TestFilter"]` |
+| **Android** | `--arg TestFilter=...` | `MauiTestInstrumentation.Current.Arguments.GetString("TestFilter")` |
+| **Windows** | `--filter "Category=..."` | Native vstest filter |
+
+**Important**: iOS uses `--set-env` (environment variable), while Android uses `--arg` (instrumentation argument). These are NOT interchangeable.
+
+### Example XHarness Commands with Filters
+
+```bash
+# iOS - uses --set-env
+xharness apple test --target ios-simulator-64_18.5 --device UDID --set-env=TestFilter=Category=Button ...
+
+# Android - uses --arg
+xharness android test --package-name com.microsoft.maui.controls.devicetests --arg TestFilter=Category=Button ...
+```
+
 ## Configuration Details
+
+### Windows SDK Payload
+
+Windows does not use XHarness, so `helix_xharness.proj` defaults `DotNetCliVersion`
+to `MicrosoftNETSdkPackageVersion` from `eng/Versions.props`. Preserve the full
+package version: a servicing SDK such as `10.0.113-servicing.26454.107` reports
+`NETCoreSdkVersion=10.0.113`, but the download feed uses the full servicing version
+in its path. Falling back to the installed SDK version can fail before any tests
+are submitted. Explicit pipeline or command-line overrides remain supported;
+other platforms keep the SDK selected by XHarness.
+
+Run the SDK-selection regression checks without building device apps or submitting
+Helix jobs:
+
+```powershell
+Invoke-Pester -Path ./eng/helix_xharness.Tests.ps1 -Output Detailed
+```
+
+### Work Item Settings
 
 The `eng/helix_xharness.proj` configuration includes:
 

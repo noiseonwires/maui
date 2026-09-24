@@ -10,29 +10,35 @@ public partial class TaskDetailPageModel : ObservableObject, IQueryAttributable
 {
 	public const string ProjectQueryKey = "project";
 	private ProjectTask? _task;
-	private bool _canDelete;
 	private readonly ProjectRepository _projectRepository;
 	private readonly TaskRepository _taskRepository;
 	private readonly ModalErrorHandler _errorHandler;
 
 	[ObservableProperty]
-	private string _title = string.Empty;
+	public partial string Title { get; set; } = string.Empty;
 
 	[ObservableProperty]
-	private bool _isCompleted;
+	public partial bool IsCompleted { get; set; }
 
 	[ObservableProperty]
-	private List<Project> _projects = [];
+	public partial List<Project> Projects { get; set; } = [];
 
 	[ObservableProperty]
-	private Project? _project;
+	public partial Project? Project { get; set; }
 
 	[ObservableProperty]
-	private int _selectedProjectIndex = -1;
+	public partial int SelectedProjectIndex { get; set; } = -1;
 
 
 	[ObservableProperty]
-	private bool _isExistingProject;
+	public partial bool IsExistingProject { get; set; }
+
+	[ObservableProperty]
+	public partial bool IsProjectPickerExpanded { get; set; }
+
+	[ObservableProperty]
+	[NotifyCanExecuteChangedFor(nameof(DeleteCommand))]
+	public partial bool CanDelete { get; set; }
 
 	public TaskDetailPageModel(ProjectRepository projectRepository, TaskRepository taskRepository, ModalErrorHandler errorHandler)
 	{
@@ -108,13 +114,15 @@ public partial class TaskDetailPageModel : ObservableObject, IQueryAttributable
 		}
 	}
 
-	public bool CanDelete
+	partial void OnIsProjectPickerExpandedChanged(bool value)
 	{
-		get => _canDelete;
-		set
+		if (value)
 		{
-			_canDelete = value;
-			DeleteCommand.NotifyCanExecuteChanged();
+			SemanticScreenReader.Announce("Project ComboBox, State Expanded");
+		}
+		else
+		{
+			SemanticScreenReader.Announce("Project ComboBox, State Collapsed");
 		}
 	}
 

@@ -1,6 +1,10 @@
 using System.Reflection;
+#if MACUITEST
+using System.Runtime.InteropServices;
+#endif
 using System.Text.RegularExpressions;
 using ImageMagick;
+using ImageMagick.Drawing;
 using NUnit.Framework;
 using NUnit.Framework.Constraints;
 using UITest.Appium;
@@ -16,7 +20,7 @@ namespace Microsoft.Maui.TestCases.Tests
 #elif IOSUITEST
 	[TestFixture(TestDevice.iOS)]
 #elif MACUITEST
-		[TestFixture(TestDevice.Mac)]
+	[TestFixture(TestDevice.Mac)]
 #elif WINTEST
 		[TestFixture(TestDevice.Windows)]
 #endif
@@ -25,6 +29,29 @@ namespace Microsoft.Maui.TestCases.Tests
 		string _defaultiOSVersion = "18.5";
 
 		protected const int SetupMaxRetries = 1;
+		protected const int InstrumentationCrashMaxRetries = 1;
+
+		/// <summary>
+		/// Detects if an exception indicates an Android UiAutomator2 instrumentation crash
+		/// or other infrastructure failure that requires session recreation.
+		/// </summary>
+		private static bool IsInstrumentationCrash(Exception e)
+		{
+			var message = e.ToString(); // Includes InnerException
+			return
+				message.Contains("instrumentation process is not running", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("socket hang up", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("Can't find service: package", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("Could not proxy command to remote server", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("ECONNRESET", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("ECONNREFUSED", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("Connection refused", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("InvalidSessionIdException", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("NoSuchDriverException", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("session is either terminated or not started", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("UiAutomator2 server", StringComparison.OrdinalIgnoreCase) ||
+				message.Contains("device offline", StringComparison.OrdinalIgnoreCase);
+		}
 		readonly VisualRegressionTester _visualRegressionTester;
 		readonly IImageEditorFactory _imageEditorFactory;
 		readonly VisualTestContext _visualTestContext;
@@ -73,12 +100,19 @@ namespace Microsoft.Maui.TestCases.Tests
 						config.SetProperty("Udid", udid);
 					}
 					else
-					{					 
+					{
 						config.SetProperty("DeviceName", Environment.GetEnvironmentVariable("DEVICE_NAME") ?? "iPhone Xs");
 						config.SetProperty("PlatformVersion", Environment.GetEnvironmentVariable("PLATFORM_VERSION") ?? _defaultiOSVersion);
 					}
-					
+
 					config.SetProperty("Headless", bool.Parse(Environment.GetEnvironmentVariable("HEADLESS") ?? "false"));
+					break;
+				case TestDevice.Mac:
+					var macAppPath = Environment.GetEnvironmentVariable("MAC_APP_PATH") ?? "";
+					if (!string.IsNullOrEmpty(macAppPath))
+					{
+						config.SetProperty("AppPath", macAppPath);
+					}
 					break;
 				case TestDevice.Windows:
 					var appProjectFolder = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!, "..\\..\\..\\Controls.TestCases.HostApp");
@@ -134,7 +168,7 @@ namespace Microsoft.Maui.TestCases.Tests
 		{
 			App.LaunchApp();
 		}
-		
+
 		/// <summary>
 		/// Verifies the screenshots and returns an exception in case of failure.
 		/// </summary>
@@ -153,6 +187,7 @@ namespace Microsoft.Maui.TestCases.Tests
 			ref Exception? exception,
 			string? name = null,
 			TimeSpan? retryDelay = null,
+			TimeSpan? retryTimeout = null,
 			int cropLeft = 0,
 			int cropRight = 0,
 			int cropTop = 0,
@@ -165,7 +200,7 @@ namespace Microsoft.Maui.TestCases.Tests
 		{
 			try
 			{
-				VerifyScreenshot(name, retryDelay, cropLeft, cropRight, cropTop, cropBottom, tolerance
+				VerifyScreenshot(name, retryDelay, retryTimeout, cropLeft, cropRight, cropTop, cropBottom, tolerance
 #if MACUITEST || WINTEST
 				, includeTitleBar
 #endif
@@ -181,14 +216,16 @@ namespace Microsoft.Maui.TestCases.Tests
 		/// Verifies a screenshot by comparing it against a baseline image and throws an exception if verification fails.
 		/// </summary>
 		/// <param name="name">Optional name for the screenshot. If not provided, a default name will be used.</param>
-		/// <param name="retryDelay">Optional delay between retry attempts when verification fails.</param>
+		/// <param name="retryDelay">Optional delay between retry attempts when verification fails. Default is 500ms.</param>
+		/// <param name="retryTimeout">Optional total time to keep retrying before giving up. If not specified, only one retry is attempted.
+		/// Use this for animations with variable completion times (e.g., retryTimeout: TimeSpan.FromSeconds(2)).</param>
 		/// <param name="cropLeft">Number of pixels to crop from the left of the screenshot.</param>
 		/// <param name="cropRight">Number of pixels to crop from the right of the screenshot.</param>
 		/// <param name="cropTop">Number of pixels to crop from the top of the screenshot.</param>
 		/// <param name="cropBottom">Number of pixels to crop from the bottom of the screenshot.</param>
 		/// <param name="tolerance">Tolerance level for image comparison as a percentage from 0 to 100.</param>
 #if MACUITEST || WINTEST
-/// <param name="includeTitleBar">Whether to include the title bar in the screenshot comparison.</param>
+		/// <param name="includeTitleBar">Whether to include the title bar in the screenshot comparison.</param>
 #endif
 		/// <remarks>
 		/// This method immediately throws an exception if the screenshot verification fails.
@@ -205,6 +242,9 @@ namespace Microsoft.Maui.TestCases.Tests
 		/// // Allow 5% difference for animations or slight rendering variations
 		/// VerifyScreenshot("ButtonHoverState", tolerance: 5.0);
 		/// 
+		/// // Keep retrying for up to 2 seconds (useful for animations)
+		/// VerifyScreenshot("AnimatedElement", retryTimeout: TimeSpan.FromSeconds(2));
+		/// 
 		/// // Combined with cropping and tolerance
 		/// VerifyScreenshot("HeaderSection", cropTop: 50, cropBottom: 100, tolerance: 3.0);
 		/// </code>
@@ -212,6 +252,7 @@ namespace Microsoft.Maui.TestCases.Tests
 		public void VerifyScreenshot(
 			string? name = null,
 			TimeSpan? retryDelay = null,
+			TimeSpan? retryTimeout = null,
 			int cropLeft = 0,
 			int cropRight = 0,
 			int cropTop = 0,
@@ -223,15 +264,53 @@ namespace Microsoft.Maui.TestCases.Tests
 		)
 		{
 			retryDelay ??= TimeSpan.FromMilliseconds(500);
-			// Retry the verification once in case the app is in a transient state
-			try
+
+			// If retryTimeout is specified, keep retrying until timeout expires
+			// Otherwise, just retry once (backward compatible behavior)
+			if (retryTimeout.HasValue)
 			{
-				Verify(name);
+				var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+				Exception? lastException = null;
+
+				while (stopwatch.Elapsed < retryTimeout.Value)
+				{
+					try
+					{
+						Verify(name);
+						return; // Success
+					}
+					catch (Exception ex)
+					{
+						lastException = ex;
+						if (stopwatch.Elapsed + retryDelay.Value < retryTimeout.Value)
+						{
+							Thread.Sleep(retryDelay.Value);
+						}
+					}
+				}
+
+				// Final attempt after timeout
+				try
+				{
+					Verify(name);
+				}
+				catch
+				{
+					throw lastException ?? new InvalidOperationException("Screenshot verification failed");
+				}
 			}
-			catch
+			else
 			{
-				Thread.Sleep(retryDelay.Value);
-				Verify(name);
+				// Original behavior: retry once
+				try
+				{
+					Verify(name);
+				}
+				catch
+				{
+					Thread.Sleep(retryDelay.Value);
+					Verify(name);
+				}
 			}
 
 			void Verify(string? name)
@@ -271,9 +350,9 @@ namespace Microsoft.Maui.TestCases.Tests
 						}
 
 						if (!((deviceApiLevel == 30 && (deviceScreenSize.Equals("1080x1920", StringComparison.OrdinalIgnoreCase) || deviceScreenSize.Equals("1920x1080", StringComparison.OrdinalIgnoreCase)) && deviceScreenDensity == 420) ||
-								(deviceApiLevel == 36 && (deviceScreenSize.Equals("1080x2424", StringComparison.OrdinalIgnoreCase) || deviceScreenSize.Equals("2424x1080", StringComparison.OrdinalIgnoreCase)) && deviceScreenDensity == 420)))
+								(deviceApiLevel == 36 && (deviceScreenSize.Equals("1440x2960", StringComparison.OrdinalIgnoreCase) || deviceScreenSize.Equals("2960x1440", StringComparison.OrdinalIgnoreCase)) && deviceScreenDensity == 560)))
 						{
-							Assert.Fail($"Android visual tests should be run on an API30 emulator image with 1080x1920 420dpi screen or API36 emulator image with 1080x2424 420dpi screen, but the current device is API {deviceApiLevel} with a {deviceScreenSize} {deviceScreenDensity}dpi screen. Follow the steps on the MAUI UI testing wiki to launch the Android emulator with the right image.");
+							Assert.Fail($"Android visual tests should be run on an API30 emulator image with 1080x1920 420dpi screen or API36 emulator image with 1440x2960 560dpi screen, but the current device is API {deviceApiLevel} with a {deviceScreenSize} {deviceScreenDensity}dpi screen. Follow the steps on the MAUI UI testing wiki to launch the Android emulator with the right image.");
 						}
 						break;
 
@@ -344,7 +423,7 @@ namespace Microsoft.Maui.TestCases.Tests
 				// bar at the top as it varies slightly based on OS theme and is also not part of the app.
 				int cropFromTop = _testDevice switch
 				{
-					TestDevice.Android => environmentName == "android-notch-36" ? 95 : 60,
+					TestDevice.Android => environmentName == "android-notch-36" ? 112 : 60,
 					TestDevice.iOS => environmentName == "ios-iphonex" ? 90 : 110,
 					TestDevice.Windows => 32,
 					TestDevice.Mac => 29,
@@ -363,7 +442,7 @@ namespace Microsoft.Maui.TestCases.Tests
 				// For iOS, crop the home indicator at the bottom.
 				int cropFromBottom = _testDevice switch
 				{
-					TestDevice.Android => environmentName == "android-notch-36" ? 40 : 125,
+					TestDevice.Android => environmentName == "android-notch-36" ? 52 : 125,
 					TestDevice.iOS => 40,
 					_ => 0,
 				};
@@ -451,8 +530,8 @@ namespace Microsoft.Maui.TestCases.Tests
 		{
 			var message = ex.Message;
 
-			// Extract percentage from pattern: "X,XX% difference"
-			var match = Regex.Match(message, @"(\d+,\d+)%\s*difference", RegexOptions.IgnoreCase);
+			// Extract percentage from pattern: "X.XX% difference" or "X,XX% difference"
+			var match = Regex.Match(message, @"(\d+[.,]\d+)%\s*difference", RegexOptions.IgnoreCase);
 			if (match.Success)
 			{
 				var percentageString = match.Groups[1].Value.Replace(',', '.');
@@ -484,10 +563,11 @@ namespace Microsoft.Maui.TestCases.Tests
 		{
 			Reset();
 		}
-		
+
 		protected override void FixtureSetup()
 		{
 			int retries = 0;
+			int instrumentationCrashRetries = 0;
 			while (true)
 			{
 				try
@@ -503,6 +583,26 @@ namespace Microsoft.Maui.TestCases.Tests
 				catch (Exception e)
 				{
 					TestContext.Error.WriteLine($">>>>> {DateTime.Now} The FixtureSetup threw an exception. Attempt {retries}/{SetupMaxRetries}.{Environment.NewLine}Exception details: {e}");
+
+					// Check for instrumentation/infrastructure crash that requires session recreation
+					if (IsInstrumentationCrash(e) && instrumentationCrashRetries++ < InstrumentationCrashMaxRetries)
+					{
+						TestContext.Error.WriteLine($">>>>> {DateTime.Now} Detected instrumentation crash, attempting session recreation (attempt {instrumentationCrashRetries}/{InstrumentationCrashMaxRetries})...");
+						try
+						{
+							// Call base.Reset() which disposes and recreates the driver
+							// (NOT this.Reset() which just does App.ResetApp())
+							base.Reset();
+							TestContext.Error.WriteLine($">>>>> {DateTime.Now} Session recreation successful, retrying FixtureSetup...");
+							continue; // Retry the whole FixtureSetup with fresh session
+						}
+						catch (Exception resetEx)
+						{
+							TestContext.Error.WriteLine($">>>>> {DateTime.Now} Session recreation failed: {resetEx.Message}");
+							// Fall through to standard retry logic
+						}
+					}
+
 					if (retries++ < SetupMaxRetries)
 					{
 						App.Back();
@@ -529,10 +629,27 @@ namespace Microsoft.Maui.TestCases.Tests
 				{
 					App.SetOrientationPortrait();
 				}
-				catch
+				catch (Exception e)
 				{
-					// The app might not be ready
-					// Probably reduce this value if this works
+					// Check for instrumentation crash that requires session recreation
+					if (IsInstrumentationCrash(e))
+					{
+						TestContext.Error.WriteLine($">>>>> {DateTime.Now} Detected instrumentation crash in TestSetup, attempting session recreation...");
+						try
+						{
+							base.Reset(); // Recreate the driver session
+							TestContext.Error.WriteLine($">>>>> {DateTime.Now} Session recreation successful in TestSetup");
+							App.SetOrientationPortrait();
+							return;
+						}
+						catch (Exception resetEx)
+						{
+							TestContext.Error.WriteLine($">>>>> {DateTime.Now} Session recreation failed in TestSetup: {resetEx.Message}");
+							throw;
+						}
+					}
+
+					// The app might not be ready - original retry logic
 					Thread.Sleep(1000);
 					App.SetOrientationPortrait();
 				}
@@ -540,6 +657,35 @@ namespace Microsoft.Maui.TestCases.Tests
 		}
 
 #if MACUITEST
+		const string CoreGraphicsLibrary = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+
+		[StructLayout(LayoutKind.Sequential)]
+		struct NativePoint
+		{
+			public double X;
+			public double Y;
+		}
+
+		[StructLayout(LayoutKind.Sequential)]
+		struct NativeSize
+		{
+			public double Width;
+			public double Height;
+		}
+
+		[StructLayout(LayoutKind.Sequential)]
+		struct NativeRectangle
+		{
+			public NativePoint Origin;
+			public NativeSize Size;
+		}
+
+		[DllImport(CoreGraphicsLibrary)]
+		static extern uint CGMainDisplayID();
+
+		[DllImport(CoreGraphicsLibrary)]
+		static extern NativeRectangle CGDisplayBounds(uint display);
+
 		byte[] TakeScreenshot()
 		{
 			// Since the Appium screenshot on Mac (unlike Windows) is of the entire screen, not just the app,
@@ -550,21 +696,89 @@ namespace Microsoft.Maui.TestCases.Tests
 			var y = windowBounds.Y;
 			var width = windowBounds.Width;
 			var height = windowBounds.Height;
+			var logicalWidth = width;
+			var logicalHeight = height;
 			const int cornerRadius = 12;
 
 			// Take the screenshot
 			var bytes = App.Screenshot();
 
-			// Draw a rounded rectangle with the app window bounds as mask
-			using var surface = new MagickImage(MagickColors.Transparent, width, height);
+			if (logicalWidth <= 0 || logicalHeight <= 0)
+				return bytes;
+
+			byte[] ReturnUncroppedScreenshot(string reason)
+			{
+				TestContext.Error.WriteLine($"Unable to crop the Mac screenshot; preserving the full screenshot instead. {reason}");
+				return bytes;
+			}
+
+			using var image = new MagickImage(bytes);
+			NativeRectangle displayBounds;
+			try
+			{
+				displayBounds = CGDisplayBounds(CGMainDisplayID());
+			}
+			catch (DllNotFoundException ex)
+			{
+				return ReturnUncroppedScreenshot($"CoreGraphics could not be loaded: {ex.Message}");
+			}
+			catch (EntryPointNotFoundException ex)
+			{
+				return ReturnUncroppedScreenshot($"A required CoreGraphics entry point was unavailable: {ex.Message}");
+			}
+			catch (BadImageFormatException ex)
+			{
+				return ReturnUncroppedScreenshot($"CoreGraphics could not be loaded for this architecture: {ex.Message}");
+			}
+
+			if (displayBounds.Size.Width <= 0 || displayBounds.Size.Height <= 0)
+				return ReturnUncroppedScreenshot($"Invalid main display bounds: {displayBounds.Size.Width}x{displayBounds.Size.Height}.");
+
+			// CGDisplayBounds and Mac2 element bounds use the display coordinate space,
+			// while the PNG uses its backing pixels. Deriving the scale from the actual
+			// image also handles non-Retina and downsampled screenshots correctly.
+			double scaleX = image.Width / displayBounds.Size.Width;
+			double scaleY = image.Height / displayBounds.Size.Height;
+
+			if (!double.IsFinite(scaleX) || !double.IsFinite(scaleY) || scaleX <= 0 || scaleY <= 0)
+				return ReturnUncroppedScreenshot($"Invalid screenshot scale: {scaleX}x{scaleY}.");
+
+			int pixelX = (int)Math.Round((x - displayBounds.Origin.X) * scaleX);
+			int pixelY = (int)Math.Round((y - displayBounds.Origin.Y) * scaleY);
+			int pixelRight = (int)Math.Round((x + logicalWidth - displayBounds.Origin.X) * scaleX);
+			int pixelBottom = (int)Math.Round((y + logicalHeight - displayBounds.Origin.Y) * scaleY);
+			int pixelWidth = pixelRight - pixelX;
+			int pixelHeight = pixelBottom - pixelY;
+
+			if (pixelX < 0 || pixelY < 0 || pixelWidth <= 0 || pixelHeight <= 0 ||
+				pixelRight > image.Width || pixelBottom > image.Height)
+			{
+				return ReturnUncroppedScreenshot(
+					$"Mac app window pixels ({pixelX},{pixelY},{pixelWidth},{pixelHeight}) " +
+					$"are outside screenshot bounds {image.Width}x{image.Height}.");
+			}
+
+			int pixelCornerRadius = Math.Max(1, (int)Math.Round(cornerRadius * Math.Min(scaleX, scaleY)));
+
+			// Draw a rounded rectangle with the physical-pixel app window bounds as mask.
+			using var surface = new MagickImage(MagickColors.Transparent, (uint)pixelWidth, (uint)pixelHeight);
 			new Drawables()
-				.RoundRectangle(0, 0, width, height, cornerRadius, cornerRadius)
+				.RoundRectangle(0, 0, pixelWidth, pixelHeight, pixelCornerRadius, pixelCornerRadius)
 				.FillColor(MagickColors.Black)
 				.Draw(surface);
 
-			// Composite the screenshot with the mask
-			using var image = new MagickImage(bytes);
-			surface.Composite(image, -x, -y, CompositeOperator.SrcAtop);
+			surface.Composite(image, -pixelX, -pixelY, CompositeOperator.SrcAtop);
+
+			// Keep committed snapshots density-independent and preserve the existing
+			// logical crop values (for example, the 29-point title-bar crop).
+			if (pixelWidth != logicalWidth || pixelHeight != logicalHeight)
+			{
+				var logicalSize = new MagickGeometry((uint)logicalWidth, (uint)logicalHeight)
+				{
+					IgnoreAspectRatio = true,
+				};
+				surface.Resize(logicalSize);
+			}
 
 			return surface.ToByteArray(MagickFormat.Png);
 		}

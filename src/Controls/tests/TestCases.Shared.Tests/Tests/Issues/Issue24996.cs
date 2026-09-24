@@ -1,5 +1,4 @@
 ﻿using NUnit.Framework;
-using NUnit.Framework.Legacy;
 using UITest.Appium;
 using UITest.Core;
 
@@ -15,15 +14,18 @@ namespace Microsoft.Maui.TestCases.Tests.Issues
 
 		[Test]
 		[Category(UITestCategories.Layout)]
-		public async Task ChangingTranslationShouldNotCauseLayoutPassOnAncestors()
+		public void ChangingTranslationShouldNotCauseLayoutPassOnAncestors()
 		{
-			var element = App.WaitForElement("Stats");
+			App.WaitForElement("Stats");
 			// Tries to translate the element in different positions, on-screen and off-screen.
 			for (int i = 0; i < 4; i++)
 			{
-				element.Tap();
-				await Task.Delay(150);
-				ClassicAssert.True(element.GetText()!.StartsWith("Lvl1[0/0]"));
+				App.Tap("Stats");
+				// The app updates the "Stats" text asynchronously ~100ms after the tap.
+				// Waiting only for the element to exist (WaitForElement) races with that
+				// update and can read stale text, so wait for the expected text instead.
+				bool textUpdated = App.WaitForTextToBePresentInElement("Stats", "Lvl1[0/0]");
+				Assert.That(textUpdated, Is.True);
 			}
 		}
 	}
